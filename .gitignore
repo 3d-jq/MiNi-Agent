@@ -1,0 +1,18 @@
+# 密钥与配置 —— 千万不要提交!
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+
+# 日志与临时文件
+*.log
+debug.log
+.dsh-test/
