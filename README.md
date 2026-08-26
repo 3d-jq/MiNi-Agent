@@ -1,6 +1,6 @@
 # MiNi Agent
 
-> 实验中的 CLI 编程 Agent —— 无 Agent 框架,从零手写,边学边造。
+> 实验中的 CLI 编程 Agent —— 按主流 Agent 架构从零手写,不依赖任何框架,边学边造。
 
 基于 DeepSeek API(OpenAI 兼容协议)的迷你编程助手。
 这是一个处于早期的学习/实验项目,结构和功能都会持续大改,README 只描述当前状态,不作为稳定接口文档。
