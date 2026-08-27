@@ -8,6 +8,13 @@ from llm_client import client
 from prompts import build_system_prompt
 from tool_registry import TOOL_CALL_MAP, TOOL_EMOJI, tools
 
+from rich.live import Live
+from rich.console import Console
+from rich.markdown import Markdown
+
+import shutil  # 顶部 import 区加
+
+console = Console()
 # 上下文(会话全局状态,system prompt 固定在前,历史严格追加式以保 KV 缓存命中)
 context = [{"role": "system", "content": build_system_prompt()}]
 
@@ -45,10 +52,11 @@ async def mini_agent_loop(question, model_name):
                 stream_options={"include_usage": True},
             )
             print_thinking_header = True  # 还没打过思考标题
-            print_answer_header = True  # 还没打过答案标题
+            print_answering_header =True# 回答标题是否已打
             content = ""
             current_tool_calls = {}  # 字典记录大模型工具调用信息
             last_usage = None
+            live = None  # 回答开始后才创建 Live,避免与 thinking 的 print 冲突
             for chunk in response:
                 # 收集 token 用量:只有最后一个块带 usage,其余块都是 None
                 if getattr(chunk, "usage", None):
@@ -79,20 +87,28 @@ async def mini_agent_loop(question, model_name):
                     if tc.function and tc.function.arguments:
                         current_tool_calls[idx]["function"]["arguments"] += tc.function.arguments
 
-                if ans:
-                    if print_answer_header:
+                if ans:  # 回答用 markdown 流式渲染,不 print
+                    if print_answering_header:
                         print("\n\n💬 认真回答：", end="\n", flush=True)
-                        print_answer_header = False
-                    print(ans, end="", flush=True)
+                        print_answering_header = False
+                    if live is None:
+                        live = Live(Markdown(""), refresh_per_second=12, console=console)
+                        live.start()
                     content += ans
+                    if len(content) % 60 < len(ans):  # 大约每新增 60 字才刷新一次
+                        live.update(Markdown(content))
 
+                    # ← 收尾移到 for 循环【外】:所有块处理完才 stop
+            if live is not None:
+                live.stop()
+                console.print("")  # 保证后续输出换行
             # 达到 80% 窗口阈值 → 主动压缩(参考 harness 的 pressure 触发)
             if last_usage and getattr(last_usage, "prompt_tokens", 0) >= int(CONTEXT_WINDOW * THRESHOLD_RATIO):
                 compress_context(context)
             if not current_tool_calls:
                 context.append({"role": "assistant", "content": content})
-                print("\n")
-                print("-" * 70)
+                width = shutil.get_terminal_size().columns
+                print("-" * width)
                 if last_usage:
                     print(f"[tokens详情] 总tokens:{last_usage.total_tokens}   命中缓存: {last_usage.prompt_cache_hit_tokens / last_usage.prompt_tokens * 100:.1f}%   上下文窗口详情: {last_usage.prompt_tokens / 10000:.1f}万/100万({last_usage.prompt_tokens / 1_000_000:.1%})", flush=True)
                 return
@@ -120,9 +136,10 @@ async def mini_agent_loop(question, model_name):
 
 
 async def main():
-    print("-" * 60)
-    print(" " * 20 + "MiNi Agent" + " " * 20)
-    print("-" * 60, end=" ")
+    width = shutil.get_terminal_size().columns
+    print("-" * width)
+    print(f"{'MiNi Agent':^{width}}")  # ^ 表示居中,^width 就是"放在 width 宽度中间"
+    print("-" * width, end=" ")
     while True:
         print("\n")
         question = input(">:").strip()
