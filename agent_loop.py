@@ -17,8 +17,27 @@ import shutil  # 顶部 import 区加
 console = Console()
 # 上下文(会话全局状态,system prompt 固定在前,历史严格追加式以保 KV 缓存命中)
 context = [{"role": "system", "content": build_system_prompt()}]
+#
+REPEAT_THRESHOLDS = [3, 5, 8]          # 升序阶梯,hits 即提醒
+_tool_chain = {"key": None, "count": 0}
+def observe_tool_call(name: str, args: dict):
+    """连续重复检测:与上次相同则+1,不同则重置。命中阈值返回提醒文本,否则 None。"""
+    key = json.dumps([name, json.dumps(args, sort_keys=True, ensure_ascii=False)], ensure_ascii=False)
+    if _tool_chain["key"] == key:
+        _tool_chain["count"] += 1
+    else:
+        _tool_chain["key"], _tool_chain["count"] = key, 1
 
-
+    count = _tool_chain["count"]
+    if count not in REPEAT_THRESHOLDS:
+        return None
+    if count == REPEAT_THRESHOLDS[0]:  # 温和提醒
+        return ("你在用完全相同的参数重复调用同一个工具。调用前仔细分析上一次的结果:"
+                "若任务未完成,换一种方法或换参数,而不是重复同一调用。")
+    return (f"检测到重复工具调用:\n- tool: {name}\n- 连续次数: {count}\n"
+            f"- 参数: {str(args)[:500]}\n"   # 展示截断,防大参数撑爆上下文
+            "这些重复调用没有产生进展,不要再用完全相同参数调用该工具。"
+            "查看最近一次结果,选不同动作/参数,证据足够就结束任务。")
 async def run_tools_parallel(tool_calls: dict) -> dict:
     """并行执行一批工具调用,返回 {tool_call_id: 结果文本}。单个工具失败不影响其它工具。"""
     async def one(v):
@@ -27,15 +46,20 @@ async def run_tools_parallel(tool_calls: dict) -> dict:
         print(f"\n调用工具: {TOOL_EMOJI.get(name, '?')}{name}", flush=True)
         fn = TOOL_CALL_MAP.get(name)
         if not fn:
-            return v["id"], f"未知工具:{name}"
-        try:
-            return v["id"], str(await asyncio.to_thread(fn, **args))
-        except Exception as e:  # 单个工具炸了,只影响它自己,其它照跑
-            return v["id"], f"工具 {name} 执行出错:{type(e).__name__}: {e}"
+            result = f"未知工具:{name}"
+        else:
+            try:
+                result = str(await asyncio.to_thread(fn, **args))
+            except Exception as e:  # 单个工具炸了,只影响它自己,其它照跑
+                result = f"工具 {name} 执行出错:{type(e).__name__}: {e}"
+        # 连续重复检测(执行后计数——成功/失败/未知工具都计入)
+        reminder = observe_tool_call(name, args)
+        if reminder:
+            result += "\n\n⚠️ " + reminder  # 提醒拼进工具结果,模型下一轮自然看到
+        return v["id"], result
 
     results = await asyncio.gather(*(one(v) for v in tool_calls.values()))
     return dict(results)
-
 
 async def mini_agent_loop(question, model_name):
     """调用模型。reasoner 会返回思考过程 + 最终答案。"""
@@ -95,8 +119,7 @@ async def mini_agent_loop(question, model_name):
                         live = Live(Markdown(""), refresh_per_second=12, console=console)
                         live.start()
                     content += ans
-                    if len(content) % 60 < len(ans):  # 大约每新增 60 字才刷新一次
-                        live.update(Markdown(content))
+                    live.update(Markdown(content))  # ← 每次更新,Live 内部 12Hz 节流
 
                     # ← 收尾移到 for 循环【外】:所有块处理完才 stop
             if live is not None:
@@ -145,6 +168,7 @@ async def main():
         question = input(">:").strip()
         if not question:
             continue
+        _tool_chain["count"] = 0  # 用户新输入打断"连续"语义,跨问话不算循环
         context.append({"role": "user", "content": question})
         await mini_agent_loop(question, MODEL_NAME)
 
