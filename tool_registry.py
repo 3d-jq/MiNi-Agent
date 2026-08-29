@@ -5,7 +5,7 @@ from sub_agent import sub_agent
 from tools_bash import bash
 from tools_files import edit, glob, grep, list_dir, read, write
 from tools_web import fetch_url, web_search
-from tools_memory import clear_memory, save_memory
+from tools_memory import clear_memory, save_memory,edit_memory,delete_memory
 tools = [
     {
         "type": "function",
@@ -183,6 +183,33 @@ tools = [
             "parameters": {"type": "object", "properties": {}, "required": []}
         }
     },
+    {
+            "type": "function",
+            "function": {
+                "name": "edit_memory",
+                "description": "修改一条已有记忆。old_text 必须引用记忆里的原文片段(要求唯一匹配)。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "old_text": {"type": "string", "description": "要修改的原文片段(唯一匹配)"},
+                        "new_text": {"type": "string", "description": "替换成的内容"}
+                    },
+                    "required": ["old_text", "new_text"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "delete_memory",
+                "description": "删除包含关键词的记忆条目。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"keyword": {"type": "string", "description": "关键词,包含它的记忆行会被删除"}},
+                    "required": ["keyword"]
+                }
+            }
+        },
 
 ]
 
@@ -199,7 +226,9 @@ TOOL_CALL_MAP = {
     "bash": bash,
     "sub_agent": sub_agent,
     "save_memory":save_memory,
-    "clear_memory":clear_memory
+    "clear_memory":clear_memory,
+    "edit_memory": edit_memory,
+    "delete_memory": delete_memory,
 
 }
 
@@ -215,5 +244,7 @@ TOOL_EMOJI = {
     "bash": "💻",
     "sub_agent": "🧩",
     "save_memory":"🧠",
-    "clear_memory":"🗑️"
+    "clear_memory":"🗑️",
+    "edit_memory": "✏️",
+    "delete_memory": "🗑️",
 }

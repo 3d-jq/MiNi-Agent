@@ -6,7 +6,7 @@
 import pytest
 
 import tools_memory
-from tools_memory import clear_memory, load_memory, save_memory
+from tools_memory import clear_memory, delete_memory, edit_memory, load_memory, save_memory
 
 
 @pytest.fixture
@@ -83,6 +83,67 @@ def test_prompt_omits_memory_block_when_empty(memory_file):
     assert "<memory>" not in prompt            # 无记忆时整块不输出
 
 
+# ---------- edit_memory ----------
+
+def test_edit_replaces_unique_match(memory_file):
+    save_memory("用户是四川人", time="2026-08-29")
+    msg = edit_memory("四川人", "重庆人")
+    assert "已更新" in msg
+    text = load_memory()
+    assert "重庆人" in text and "四川人" not in text
+
+
+def test_edit_no_match_message(memory_file):
+    save_memory("用户是四川人", time="2026-08-29")
+    assert "没找到" in edit_memory("不存在的文本", "x")
+    assert "四川人" in load_memory()          # 文件未动
+
+
+def test_edit_refuses_multiple_matches(memory_file):
+    save_memory("喜欢 Python", time="2026-08-29")
+    save_memory("喜欢 Rust", time="2026-08-29")
+    before = load_memory()
+    msg = edit_memory("喜欢", "热爱")          # 两处匹配
+    assert "2 处匹配" in msg                   # 拒绝并提示
+    assert load_memory() == before             # 文件必须原样
+
+
+def test_edit_on_missing_file(memory_file):
+    assert "不存在" in edit_memory("a", "b")
+
+
+# ---------- delete_memory ----------
+
+def test_delete_removes_matching_line_only(memory_file):
+    save_memory("用户是四川人", time="2026-08-29")
+    save_memory("用户喜欢 Python", time="2026-08-29")
+    msg = delete_memory("四川")
+    assert "已删除 1 条记忆" in msg
+    text = load_memory()
+    assert "四川人" not in text
+    assert "Python" in text                    # 其他记忆保留
+
+
+def test_delete_no_match_keeps_file(memory_file):
+    save_memory("用户是四川人", time="2026-08-29")
+    assert "没找到" in delete_memory("不存在的关键词")
+    assert "四川人" in load_memory()
+
+
+def test_delete_on_missing_file(memory_file):
+    assert "不存在" in delete_memory("a")
+
+
+def test_delete_all_then_load_empty(memory_file):
+    save_memory("A 条目", time="2026-08-29")
+    save_memory("B 条目", time="2026-08-29")
+    delete_memory("A 条目")
+    delete_memory("B 条目")
+    assert load_memory() == ""
+
+
+# ---------- 注册表一致性(编辑/删除) ----------
+
 # ---------- 注册表一致性 ----------
 
 def test_memory_tools_registered():
@@ -91,3 +152,11 @@ def test_memory_tools_registered():
     assert TOOL_CALL_MAP["clear_memory"] is clear_memory
     assert TOOL_EMOJI["save_memory"]
     assert TOOL_EMOJI["clear_memory"]
+
+
+def test_edit_delete_memory_registered():
+    from tool_registry import TOOL_CALL_MAP, TOOL_EMOJI
+    assert TOOL_CALL_MAP["edit_memory"] is edit_memory
+    assert TOOL_CALL_MAP["delete_memory"] is delete_memory
+    assert TOOL_EMOJI["edit_memory"]
+    assert TOOL_EMOJI["delete_memory"]
