@@ -6,6 +6,7 @@ from tools_bash import bash
 from tools_files import edit, glob, grep, list_dir, read, write
 from tools_web import fetch_url, web_search
 from tools_memory import clear_memory, save_memory,edit_memory,delete_memory
+from tools_skill import load_skill
 tools = [
     {
         "type": "function",
@@ -198,18 +199,30 @@ tools = [
                 }
             }
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "delete_memory",
-                "description": "删除包含关键词的记忆条目。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"keyword": {"type": "string", "description": "关键词,包含它的记忆行会被删除"}},
-                    "required": ["keyword"]
-                }
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_memory",
+            "description": "删除包含关键词的记忆条目。",
+            "parameters": {
+                "type": "object",
+                "properties": {"keyword": {"type": "string", "description": "关键词,包含它的记忆行会被删除"}},
+                "required": ["keyword"]
             }
-        },
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "load_skill",
+            "description": "加载指定技能的完整工作指南。当任务匹配 <skills> 清单中的某项时,必须先加载再执行。",
+            "parameters": {
+                "type": "object",
+                "properties": {"name": {"type": "string", "description": "技能名,见 <skills> 清单"}},
+                "required": ["name"]
+            }
+        }
+    },
 
 ]
 
@@ -229,6 +242,7 @@ TOOL_CALL_MAP = {
     "clear_memory":clear_memory,
     "edit_memory": edit_memory,
     "delete_memory": delete_memory,
+    "load_skill":load_skill
 
 }
 
@@ -247,4 +261,5 @@ TOOL_EMOJI = {
     "clear_memory":"🗑️",
     "edit_memory": "✏️",
     "delete_memory": "🗑️",
+    "load_skill":"📖"
 }

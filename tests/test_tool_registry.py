@@ -5,6 +5,7 @@ EXPECTED_TOOLS = {
     "web_search", "fetch_url", "read", "grep", "write",
     "edit", "glob", "list_dir", "bash", "sub_agent",
     "save_memory", "clear_memory", "edit_memory", "delete_memory",
+    "load_skill",
 }
 
 

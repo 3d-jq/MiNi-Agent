@@ -1,7 +1,7 @@
 """System prompt 构建:XML 化静态编排,内容保持稳定以命中 DeepSeek 前缀 KV 缓存。"""
 from datetime import datetime
 from tools_memory import load_memory
-
+from tools_skill import list_skills
 def build_system_prompt() -> str:
     now = datetime.now()
     date = now.strftime("%Y-%m-%d")
@@ -12,6 +12,11 @@ def build_system_prompt() -> str:
     memory_section = (
         f"\n    <memory>\n    以下是跨会话长期记忆,视为已知背景:\n    {memory}\n    </memory>\n"
         if memory.strip() else ""
+    )
+    skills_list = list_skills()
+    skills_section = (
+        f"\n    <skills>\n    可用技能清单。当用户任务匹配某项时,先调用 load_skill 加载完整指南再行动:\n    {skills_list}\n    </skills>\n"
+        if skills_list else ""
     )
     return f"""
     <role>MiNi Agent</role>
@@ -26,9 +31,10 @@ def build_system_prompt() -> str:
         <rule priority="critical">根据用户的问答语言用对应语言回答回答用户</rule>
         <rule priority="high">禁止执行破坏性危险操作</rule>
         <rule priority="high">修改文件前先阅读文件内容</rule>
-         <rule priority="high">面对用户的相关信息时候或者可以记住的内容，可以调用记忆工具进行记忆，这样可以更加了解用户，要一点一点补全对用户了解</rule>
+        <rule priority="high">面对用户的相关信息时候或者可以记住的内容，可以调用记忆工具进行记忆，这样可以更加了解用户，要一点一点补全对用户了解</rule>
+        <rule priority="high">按需使用对应skills，提高自身能力</rule>
     </rules>
-    <environment>Windows 11 / cmd.exe,经 Git Bash 语义执行命令</environment>{memory_section}
+    <environment>Windows 11 / cmd.exe,经 Git Bash 语义执行命令</environment>{memory_section}{skills_section}
     <current_time>
         <date>{date}</date>
         <time>{time}</time>
