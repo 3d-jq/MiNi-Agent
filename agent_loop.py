@@ -1,6 +1,10 @@
 """Agent 主循环:会话状态(context)、并行工具执行层、对话循环与 CLI 入口。"""
 import asyncio
 import json
+import msvcrt   # Windows 键盘监听(Windows 专属模块)
+import os
+import threading
+import time
 
 from compaction import compress_context
 from config import CONTEXT_WINDOW, MODEL_NAME, THRESHOLD_RATIO
@@ -17,6 +21,29 @@ import shutil  # 顶部 import 区加
 console = Console()
 # 上下文(会话全局状态,system prompt 固定在前,历史严格追加式以保 KV 缓存命中)
 context = [{"role": "system", "content": build_system_prompt()}]
+
+# ESC 中断:agent 运行期间由后台线程监听键盘,按下即置位事件,循环在检查点响应
+_esc_event = threading.Event()
+
+def fmt_args(args: dict, max_chars: int = 80) -> str:
+    """工具参数预览:每个值截断到 max_chars,换行压成 ⏎,防长参数刷屏。"""
+    parts = []
+    for k, v in args.items():
+        s = str(v).replace("\n", "⏎")
+        if len(s) > max_chars:
+            s = s[:max_chars] + f"...(共{len(s)}字符)"
+        parts.append(f"{k}={s}")
+    return ", ".join(parts)
+
+def _esc_listener():
+    """后台线程:仅在 agent 运行期间存活,防止 input() 时吞掉键盘输入。"""
+    while not _esc_event.is_set():
+        if msvcrt.kbhit() and msvcrt.getch() == b'\x1b':   # ESC 的字节是 \x1b
+            _esc_event.set()
+            print("\n⏸️ 检测到 ESC,正在中断本轮...", flush=True)
+            return
+        time.sleep(0.05)
+
 #
 REPEAT_THRESHOLDS = [3, 5, 8]          # 升序阶梯,hits 即提醒
 _tool_chain = {"key": None, "count": 0}
@@ -43,7 +70,7 @@ async def run_tools_parallel(tool_calls: dict) -> dict:
     async def one(v):
         name = v["function"]["name"]
         args = json.loads(v["function"]["arguments"] or "{}")
-        print(f"\n调用工具: {TOOL_EMOJI.get(name, '?')}{name}", flush=True)
+        print(f"\n调用工具: {TOOL_EMOJI.get(name, '?')}{name} ({fmt_args(args)})", flush=True)
         fn = TOOL_CALL_MAP.get(name)
         if not fn:
             result = f"未知工具:{name}"
@@ -62,107 +89,130 @@ async def run_tools_parallel(tool_calls: dict) -> dict:
     return dict(results)
 
 async def mini_agent_loop(question, model_name):
-    """调用模型。reasoner 会返回思考过程 + 最终答案。"""
-    while True:
-        try:
-            response = client.chat.completions.create(
-                model=model_name,
-                temperature=0.5,
-                messages=context,
-                reasoning_effort="high",
-                extra_body={"thinking": {"type": "enabled"}},
-                stream=True,
-                tools=tools,
-                stream_options={"include_usage": True},
-            )
-            print_thinking_header = True  # 还没打过思考标题
-            print_answering_header =True# 回答标题是否已打
-            content = ""
-            current_tool_calls = {}  # 字典记录大模型工具调用信息
-            last_usage = None
-            live = None  # 回答开始后才创建 Live,避免与 thinking 的 print 冲突
-            for chunk in response:
-                # 收集 token 用量:只有最后一个块带 usage,其余块都是 None
-                if getattr(chunk, "usage", None):
-                    last_usage = chunk.usage
-                # 有些 provider 的 usage 块 choices 是空的,跳过防止下面 [0] 越界
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                ans = getattr(delta, "content", None)
-                think = getattr(delta, "reasoning_content", None)
+    """调用模型。reasoner 会返回思考过程 + 最终答案。ESC 可随时中断本轮。"""
+    _esc_event.clear()
+    listener = threading.Thread(target=_esc_listener, daemon=True)
+    listener.start()
+    try:
+        while True:
+            try:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    temperature=0.5,
+                    messages=context,
+                    reasoning_effort="high",
+                    extra_body={"thinking": {"type": "enabled"}},
+                    stream=True,
+                    tools=tools,
+                    stream_options={"include_usage": True},
+                )
+                print_thinking_header = True  # 还没打过思考标题
+                print_answering_header =True# 回答标题是否已打
+                content = ""
+                current_tool_calls = {}  # 字典记录大模型工具调用信息
+                last_usage = None
+                live = None  # 回答开始后才创建 Live,避免与 thinking 的 print 冲突
+                for chunk in response:
+                    # ESC 中断:只保留已生成的文字,未执行的 tool_calls 整条丢弃
+                    # (assistant 带 tool_calls 必须配对 tool 结果,否则下次请求 API 400)
+                    if _esc_event.is_set():
+                        if live is not None:
+                            live.update(Markdown(content))
+                            live.stop()
+                            console.print("")
+                        if content.strip():
+                            context.append({"role": "assistant",
+                                            "content": content + "\n\n(用户按 ESC 中断)"})
+                            print("✂️ 已保存部分回答", flush=True)
+                        return
+                    # 收集 token 用量:只有最后一个块带 usage,其余块都是 None
+                    if getattr(chunk, "usage", None):
+                        last_usage = chunk.usage
+                    # 有些 provider 的 usage 块 choices 是空的,跳过防止下面 [0] 越界
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    ans = getattr(delta, "content", None)
+                    think = getattr(delta, "reasoning_content", None)
 
-                if think:
-                    if print_thinking_header:
-                        print("\n🧠 深度思考", end="\n", flush=True)
-                        print_thinking_header = False
-                    print(think, end="", flush=True)
-                for tc in (delta.tool_calls or []):
-                    idx = tc.index
-                    if idx not in current_tool_calls:
-                        current_tool_calls[idx] = {
-                            "id": "",
-                            "function": {"name": "", "arguments": ""}
-                        }
-                    if tc.id:
-                        current_tool_calls[idx]["id"] = tc.id
-                    if tc.function and tc.function.name:
-                        current_tool_calls[idx]["function"]["name"] = tc.function.name
-                    if tc.function and tc.function.arguments:
-                        current_tool_calls[idx]["function"]["arguments"] += tc.function.arguments
+                    if think:
+                        if print_thinking_header:
+                            print("\n🧠 深度思考", end="\n", flush=True)
+                            print_thinking_header = False
+                        print(think, end="", flush=True)
+                    for tc in (delta.tool_calls or []):
+                        idx = tc.index
+                        if idx not in current_tool_calls:
+                            current_tool_calls[idx] = {
+                                "id": "",
+                                "function": {"name": "", "arguments": ""}
+                            }
+                        if tc.id:
+                            current_tool_calls[idx]["id"] = tc.id
+                        if tc.function and tc.function.name:
+                            current_tool_calls[idx]["function"]["name"] = tc.function.name
+                        if tc.function and tc.function.arguments:
+                            current_tool_calls[idx]["function"]["arguments"] += tc.function.arguments
 
-                if ans:  # 回答用 markdown 流式渲染,不 print
-                    if print_answering_header:
-                        print("\n\n💬 认真回答：", end="\n", flush=True)
-                        print_answering_header = False
-                    if live is None:
-                        live = Live(Markdown(""), refresh_per_second=12, console=console)
-                        live.start()
-                    content += ans
-                    live.update(Markdown(content))  # ← 每次更新,Live 内部 12Hz 节流
+                    if ans:  # 回答用 markdown 流式渲染,不 print
+                        if print_answering_header:
+                            print("\n\n💬 认真回答：", end="\n", flush=True)
+                            print_answering_header = False
+                        if live is None:
+                            live = Live(Markdown(""), refresh_per_second=12, console=console)
+                            live.start()
+                        content += ans
+                        live.update(Markdown(content))  # ← 每次更新,Live 内部 12Hz 节流
 
-                    # ← 收尾移到 for 循环【外】:所有块处理完才 stop
-            if live is not None:
-                live.stop()
-                console.print("")  # 保证后续输出换行
-            # 达到 80% 窗口阈值 → 主动压缩(参考 harness 的 pressure 触发)
-            if last_usage and getattr(last_usage, "prompt_tokens", 0) >= int(CONTEXT_WINDOW * THRESHOLD_RATIO):
-                compress_context(context)
-            if not current_tool_calls:
-                context.append({"role": "assistant", "content": content})
-                width = shutil.get_terminal_size().columns
-                print("-" * width)
-                if last_usage:
-                    print(f"[tokens详情] 总tokens:{last_usage.total_tokens}   命中缓存: {last_usage.prompt_cache_hit_tokens / last_usage.prompt_tokens * 100:.1f}%   上下文窗口详情: {last_usage.prompt_tokens / 10000:.1f}万/100万({last_usage.prompt_tokens / 1_000_000:.1%})", flush=True)
-                return
+                        # ← 收尾移到 for 循环【外】:所有块处理完才 stop
+                if live is not None:
+                    live.stop()
+                    console.print("")  # 保证后续输出换行
+                # 达到 80% 窗口阈值 → 主动压缩(参考 harness 的 pressure 触发)
+                if last_usage and getattr(last_usage, "prompt_tokens", 0) >= int(CONTEXT_WINDOW * THRESHOLD_RATIO):
+                    compress_context(context)
+                if not current_tool_calls:
+                    context.append({"role": "assistant", "content": content})
+                    width = shutil.get_terminal_size().columns
+                    print("-" * width)
+                    if last_usage:
+                        print(f"[tokens详情] 总tokens:{last_usage.total_tokens}   命中缓存: {last_usage.prompt_cache_hit_tokens / last_usage.prompt_tokens * 100:.1f}%   上下文窗口详情: {last_usage.prompt_tokens / 10000:.1f}万/100万({last_usage.prompt_tokens / 1_000_000:.1%})", flush=True)
+                    return
 
-            context.append({  # 模型说要调啥工具放在上下文里
-                "role": "assistant",
-                "content": content or None,
-                "tool_calls": [
-                    {"id": v["id"], "type": "function",
-                     "function": {"name": v["function"]["name"], "arguments": v["function"]["arguments"]}}
-                    for v in current_tool_calls.values()
-                ],
-            })
-
-            # 并行执行所有工具,按 id 对应回填
-            results = await run_tools_parallel(current_tool_calls)
-            for v in current_tool_calls.values():
-                context.append({
-                    "role": "tool",
-                    "tool_call_id": v["id"],
-                    "content": results[v["id"]],
+                context.append({  # 模型说要调啥工具放在上下文里
+                    "role": "assistant",
+                    "content": content or None,
+                    "tool_calls": [
+                        {"id": v["id"], "type": "function",
+                         "function": {"name": v["function"]["name"], "arguments": v["function"]["arguments"]}}
+                        for v in current_tool_calls.values()
+                    ],
                 })
-        except Exception as e:
-            return f"Error: {e}"
+
+                # 并行执行所有工具,按 id 对应回填
+                results = await run_tools_parallel(current_tool_calls)
+                for v in current_tool_calls.values():
+                    context.append({
+                        "role": "tool",
+                        "tool_call_id": v["id"],
+                        "content": results[v["id"]],
+                    })
+                # ESC 中断检查点:当前工具已执行完(结果已回填,上下文一致),
+                # 不再进入下一轮模型请求 —— "做完手头的就停"
+                if _esc_event.is_set():
+                    print("⏸️ 本轮已在工具完成后中断", flush=True)
+                    return
+            except Exception as e:
+                return f"Error: {e}"
+    finally:
+        listener.join(timeout=0.3)   # 等监听线程退出(最多 0.3s)
 
 
 async def main():
     width = shutil.get_terminal_size().columns
     print("-" * width)
-    banner = f"MiNi Agent | 模型:{MODEL_NAME} | 工作区:{123}"
-    print(f"{banner:^{width}}")
+    banner = f"MiNi Agent | 模型:{MODEL_NAME} | 工作区:{os.getcwd()}"
+    print(f"\n {banner:^{width}}")
     print("-" * width, end=" ")
     while True:
         print("\n")

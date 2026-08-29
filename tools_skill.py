@@ -39,11 +39,14 @@ def list_skills() -> str:
             out.append(f"- {name or d}: {desc}")
     return "\n".join(out)
 def load_skill(name: str) -> str:
-    """按名称加载 skill 全文;SKILL_DIR 占位符替换为技能目录的绝对路径。"""
+    """按名称加载 skill 全文;SKILL_DIR 替换为绝对路径,并告知资源根目录。"""
     skill_dir = os.path.join(SKILLS_DIR, name)
     path = os.path.join(skill_dir, "SKILL.md")
     if not os.path.isfile(path):
         return f"skill「{name}」不存在。可用技能:\n{list_skills() or '(无)'}"
     _, _, body = _parse_skill_md(path)
     body = body.replace("SKILL_DIR", skill_dir)   # minimax 系技能用它引用自带脚本
-    return f"【Skill:{name}】已加载,请严格按以下指南执行:\n\n{body}"
+    return (f"【Skill:{name}】已加载。\n"
+            f"本技能资源根目录(指南中出现的 scripts/、references/、templates/ 等相对路径都基于它):\n"
+            f"{skill_dir}\n\n"
+            f"请严格按以下指南执行:\n\n{body}")

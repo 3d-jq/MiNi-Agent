@@ -1,7 +1,7 @@
 """System prompt 构建:XML 化静态编排,内容保持稳定以命中 DeepSeek 前缀 KV 缓存。"""
 from datetime import datetime
 from tools_memory import load_memory
-from tools_skill import list_skills
+from tools_skill import SKILLS_DIR, list_skills
 def build_system_prompt() -> str:
     now = datetime.now()
     date = now.strftime("%Y-%m-%d")
@@ -15,7 +15,9 @@ def build_system_prompt() -> str:
     )
     skills_list = list_skills()
     skills_section = (
-        f"\n    <skills>\n    可用技能清单。当用户任务匹配某项时,先调用 load_skill 加载完整指南再行动:\n    {skills_list}\n    </skills>\n"
+        f"\n    <skills>\n"
+        f"    技能根目录(创建新技能时,用 write 把 SKILL.md 写到它的子目录下):{SKILLS_DIR}\n"
+        f"    可用技能清单(任务匹配时先调用 load_skill 加载全文):\n    {skills_list}\n    </skills>\n"
         if skills_list else ""
     )
     return f"""
