@@ -16,3 +16,6 @@ build/
 *.log
 debug.log
 .dsh-test/
+
+# 记忆文件含个人信息,不入库
+memory.md

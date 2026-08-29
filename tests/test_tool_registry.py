@@ -4,6 +4,7 @@ import tool_registry as tr
 EXPECTED_TOOLS = {
     "web_search", "fetch_url", "read", "grep", "write",
     "edit", "glob", "list_dir", "bash", "sub_agent",
+    "save_memory", "clear_memory",
 }
 
 

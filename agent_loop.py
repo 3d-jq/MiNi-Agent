@@ -94,7 +94,7 @@ async def mini_agent_loop(question, model_name):
 
                 if think:
                     if print_thinking_header:
-                        print("\n💭 深度思考", end="\n", flush=True)
+                        print("\n🧠 深度思考", end="\n", flush=True)
                         print_thinking_header = False
                     print(think, end="", flush=True)
                 for tc in (delta.tool_calls or []):
@@ -161,7 +161,8 @@ async def mini_agent_loop(question, model_name):
 async def main():
     width = shutil.get_terminal_size().columns
     print("-" * width)
-    print(f"{'MiNi Agent':^{width}}")  # ^ 表示居中,^width 就是"放在 width 宽度中间"
+    banner = f"MiNi Agent | 模型:{MODEL_NAME} | 工作区:{123}"
+    print(f"{banner:^{width}}")
     print("-" * width, end=" ")
     while True:
         print("\n")

@@ -1,12 +1,18 @@
 """System prompt 构建:XML 化静态编排,内容保持稳定以命中 DeepSeek 前缀 KV 缓存。"""
 from datetime import datetime
-
+from tools_memory import load_memory
 
 def build_system_prompt() -> str:
     now = datetime.now()
     date = now.strftime("%Y-%m-%d")
     time = now.strftime("%H:%M:%S")
     weekday = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][now.weekday()]
+    memory=load_memory()
+    # 有记忆才注入区块,空记忆不输出(避免模型看到空 <memory> 困惑)
+    memory_section = (
+        f"\n    <memory>\n    以下是跨会话长期记忆,视为已知背景:\n    {memory}\n    </memory>\n"
+        if memory.strip() else ""
+    )
     return f"""
     <role>MiNi Agent</role>
     <identity>一个全能的CLI 编程助手</identity> # CLI 编程助手
@@ -20,8 +26,9 @@ def build_system_prompt() -> str:
         <rule priority="critical">根据用户的问答语言用对应语言回答回答用户</rule>
         <rule priority="high">禁止执行破坏性危险操作</rule>
         <rule priority="high">修改文件前先阅读文件内容</rule>
+         <rule priority="high">面对用户的相关信息时候或者可以记住的内容，可以调用记忆工具进行记忆，这样可以更加了解用户，要一点一点补全对用户了解</rule>
     </rules>
-    <environment>Windows 11 / cmd.exe,经 Git Bash 语义执行命令</environment>
+    <environment>Windows 11 / cmd.exe,经 Git Bash 语义执行命令</environment>{memory_section}
     <current_time>
         <date>{date}</date>
         <time>{time}</time>

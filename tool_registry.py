@@ -5,7 +5,7 @@ from sub_agent import sub_agent
 from tools_bash import bash
 from tools_files import edit, glob, grep, list_dir, read, write
 from tools_web import fetch_url, web_search
-
+from tools_memory import clear_memory, save_memory
 tools = [
     {
         "type": "function",
@@ -160,6 +160,30 @@ tools = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_memory",
+            "description": "把重要信息写入长期记忆(跨会话保留)。适合记录:用户偏好、项目约定、重要决策、任务状态。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "要记住的内容,一句话完整自包含"},
+                    "time":{"type": "string","description":"对应内容的具体时间"}
+                },
+                "required": ["content","time"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "clear_memory",
+            "description": "清空全部长期记忆(高危,需用户确认后调用)。",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        }
+    },
+
 ]
 
 # 工具注册表
@@ -174,6 +198,9 @@ TOOL_CALL_MAP = {
     "list_dir": list_dir,
     "bash": bash,
     "sub_agent": sub_agent,
+    "save_memory":save_memory,
+    "clear_memory":clear_memory
+
 }
 
 TOOL_EMOJI = {
@@ -187,4 +214,6 @@ TOOL_EMOJI = {
     "list_dir": "📁",
     "bash": "💻",
     "sub_agent": "🧩",
+    "save_memory":"🧠",
+    "clear_memory":"🗑️"
 }
