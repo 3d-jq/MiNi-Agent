@@ -8,18 +8,20 @@
 ## 目前有什么
 
 - **Agent 工具循环** —— 模型自主决定调用哪些工具,结果回填上下文持续推理,直到给出答案
-- **10 个工具**:联网搜索(Tavily)、网页抓取、read / grep / write / edit / glob / list_dir、bash、子代理
-- **异步并行工具执行** —— `asyncio.gather` + `to_thread`,一次发出的多个工具调用并发跑
-- **子代理(Sub-Agent)** —— 独立上下文接受委派,静默干活只回传结论,禁止嵌套防递归
+- **14 个工具**:联网搜索(Tavily)、网页抓取、read / grep / write / edit / glob / list_dir、bash、子代理、记忆四件套(save / edit / delete / clear)
+- **长期记忆系统** —— 跨会话持久化(`memory.md`),模型自主判断"值得记"的内容并调用工具写入;启动时注入 system prompt,改/删/清各有工具
 - **上下文自动压缩** —— 占用达窗口 80% 时用 LLM 把旧历史压成结构化检查点;只切 user 消息边界、校验摘要必须更小
-- **流式深度思考输出** —— reasoning 过程与回答实时打印
+- **异步并行工具执行** —— `asyncio.gather` + `to_thread`,一次发出的多个工具调用并发跑
+- **重复调用检测** —— 连续重复链(同工具+同参数)触发阶梯提醒(3/5/8 次),只提醒不拦截,给模型自我纠正的机会
+- **回答 Markdown 流式渲染** —— `rich Live` 原地刷新,标题/代码块/列表实时渲染;思考过程保持逐字打印
+- **子代理(Sub-Agent)** —— 独立上下文接受委派,静默干活只回传结论,禁止嵌套防递归
 - **KV 缓存命中率统计** —— 从 usage 读 prompt_tokens / 缓存命中 / 窗口占用
-- **44 个测试用例** —— 43 个离线单测 + 1 个真实 LLM 集成测试(默认跳过)
+- **71 个测试用例** —— 70 个离线单测 + 1 个真实 LLM 集成测试(默认跳过)
 
 ## 运行
 
 ```bash
-pip install openai python-dotenv requests beautifulsoup4 lxml pytest
+pip install openai python-dotenv requests beautifulsoup4 lxml rich pytest
 ```
 
 根目录建 `.env`(**别提交到 git**):
@@ -44,31 +46,32 @@ RUN_REAL_LLM_TESTS=1 python -m pytest tests/test_compress_real.py -v
 ```
 
 两层测试的分工:
-- **单测**(`tests/test_compress_context.py` 等):用 FakeClient 假对象替换 LLM 调用,测**决策逻辑**——摘要太长拒绝、异常兜底、历史太少不调用、schema 与实现一致、并行并发语义;
-- **集成**(`tests/test_compress_real.py`):真实调用 DeepSeek API,只断言**结构**(system 保留、8 节摘要小节、尾部原样保留),不断言具体文字(模型输出不稳定)。
+- **单测**:用 FakeClient 假对象替换 LLM 调用,测**决策逻辑**——压缩触发与提交校验、重复调用检测的连续链、并行并发语义、记忆读写、schema 与实现一致性;
+- **集成**:真实调用 DeepSeek API,只断言**结构**(system 保留、摘要小节、尾部原样保留),不断言具体文字(模型输出不稳定)。
 
 ## 结构一览
 
-代码按职责拆分为 11 个模块,`learn.py` 只做入口转发:
+代码按职责拆分,`learn.py` 只做入口转发:
 
 | 模块 | 职责 |
 |---|---|
 | `learn.py` | 入口转发(启动命令不变:python learn.py) |
 | `config.py` | 上下文窗口 / 压缩阈值等常量(支持环境变量覆盖) |
 | `llm_client.py` | OpenAI 客户端单例(统一读取 .env) |
-| `prompts.py` | system prompt(XML 化静态编排,保前缀缓存) |
+| `prompts.py` | system prompt(XML 化静态编排 + 记忆注入,保前缀缓存) |
 | `tools_web.py` | web_search(Tavily)/ fetch_url |
 | `tools_files.py` | read / grep / write / edit / glob / list_dir |
 | `tools_bash.py` | bash(危险命令黑名单 + 超时 + 输出截断) |
+| `tools_memory.py` | 长期记忆:load / save / edit / delete / clear(memory.md) |
 | `sub_agent.py` | 子代理循环(函数内 import 打破与注册表循环依赖) |
 | `tool_registry.py` | tools schema + TOOL_CALL_MAP + TOOL_EMOJI 唯一连接点 |
 | `compaction.py` | 压缩系统:token 估算、安全切点、LLM 摘要、提交校验 |
-| `agent_loop.py` | 会话 context、并行工具执行层、主循环、CLI 入口 |
-| `tests/` | 7 个测试文件,44 个用例 |
+| `agent_loop.py` | 会话 context、并行工具执行、重复调用检测、主循环、CLI 入口 |
+| `tests/` | 9 个测试文件,71 个用例 |
 
 ## ⚠️ 免责声明
 
-学习用途。`bash` / `write` / `edit` 会真实修改本地文件系统,请在可控环境下使用;妥善保管 `.env`,密钥泄露请立即吊销。
+学习用途。`bash` / `write` / `edit` 会真实修改本地文件系统,请在可控环境下使用;妥善保管 `.env` 与 `memory.md`(均不入库),密钥泄露请立即吊销。
 
 ## License
 
